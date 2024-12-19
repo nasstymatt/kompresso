@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -18,8 +19,9 @@ import (
 )
 
 func ProcessVideo(path string, codec string, quality float64, updateProgress func(progress float64)) error {
-	outputFile := fmt.Sprintf("%s/%s_compressed%s", filepath.Dir(path), filepath.Base(path), filepath.Ext(path))
+	outputFile := filepath.Join(filepath.Dir(path), fmt.Sprintf("%s_compressed%s", filepath.Base(path), filepath.Ext(path)))
 
+	// Probe the input file to get total duration
 	probeData, err := ffmpeg.Probe(path)
 	if err != nil {
 		return fmt.Errorf("error probing file: %v", err)
@@ -29,8 +31,18 @@ func ProcessVideo(path string, codec string, quality float64, updateProgress fun
 		return fmt.Errorf("error extracting duration: %v", err)
 	}
 
-	progressSocket := progressTempSock(totalDuration, updateProgress)
+	// Create the progress socket or named pipe
+	progressSocket, socketType := progressTempSock(totalDuration, updateProgress)
 
+	// Adjust the FFmpeg argument for the socket type
+	var progressArg string
+	if socketType == "pipe" {
+		progressArg = progressSocket
+	} else {
+		progressArg = "unix://" + progressSocket
+	}
+
+	// Run FFmpeg with progress tracking
 	err = ffmpeg.Input(path).
 		Output(outputFile, ffmpeg.KwArgs{
 			"c:v":      codec,
@@ -40,7 +52,7 @@ func ProcessVideo(path string, codec string, quality float64, updateProgress fun
 			"movflags": "+faststart",
 			"preset":   "slow",
 		}).
-		GlobalArgs("-progress", "unix://"+progressSocket, "-hide_banner", "-nostats", "-loglevel", "error").
+		GlobalArgs("-progress", progressArg, "-hide_banner", "-nostats", "-loglevel", "error").
 		OverWriteOutput().
 		Run()
 
@@ -68,10 +80,26 @@ func calculateCRF(quality int) string {
 	return fmt.Sprintf("%d", crf)
 }
 
-func progressTempSock(totalDuration float64, updateProgress func(progress float64)) string {
+// progressTempSock creates a temporary socket or named pipe for progress tracking
+func progressTempSock(totalDuration float64, updateProgress func(progress float64)) (string, string) {
 	rand.Seed(time.Now().Unix())
-	sockFileName := path.Join(os.TempDir(), fmt.Sprintf("%d_sock", rand.Int()))
-	listener, err := net.Listen("unix", sockFileName)
+	var sockFileName string
+	var listener net.Listener
+	var err error
+	var socketType string
+
+	if runtime.GOOS == "windows" {
+		// Use a named pipe on Windows
+		sockFileName = fmt.Sprintf(`\\.\pipe\%d_sock`, rand.Int())
+		listener, err = net.Listen("pipe", sockFileName)
+		socketType = "pipe"
+	} else {
+		// Use a Unix domain socket on Unix-like systems
+		sockFileName = path.Join(os.TempDir(), fmt.Sprintf("%d_sock", rand.Int()))
+		listener, err = net.Listen("unix", sockFileName)
+		socketType = "unix"
+	}
+
 	if err != nil {
 		log.Fatalf("error creating socket: %v", err)
 	}
@@ -85,6 +113,8 @@ func progressTempSock(totalDuration float64, updateProgress func(progress float6
 				log.Printf("error accepting connection: %v", err)
 				return
 			}
+			defer conn.Close()
+
 			buf := make([]byte, 16)
 			data := ""
 			for {
@@ -108,7 +138,7 @@ func progressTempSock(totalDuration float64, updateProgress func(progress float6
 		}
 	}()
 
-	return sockFileName
+	return sockFileName, socketType
 }
 
 func probeDuration(a string) (float64, error) {
