@@ -15,13 +15,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/natefinch/npipe"
 	ffmpeg "github.com/u2takey/ffmpeg-go"
 )
 
 func ProcessVideo(path string, codec string, quality float64, updateProgress func(progress float64)) error {
 	outputFile := filepath.Join(filepath.Dir(path), fmt.Sprintf("%s_compressed%s", filepath.Base(path), filepath.Ext(path)))
 
-	// Probe the input file to get total duration
 	probeData, err := ffmpeg.Probe(path)
 	if err != nil {
 		return fmt.Errorf("error probing file: %v", err)
@@ -31,10 +31,8 @@ func ProcessVideo(path string, codec string, quality float64, updateProgress fun
 		return fmt.Errorf("error extracting duration: %v", err)
 	}
 
-	// Create the progress socket or named pipe
 	progressSocket, socketType := progressTempSock(totalDuration, updateProgress)
 
-	// Adjust the FFmpeg argument for the socket type
 	var progressArg string
 	if socketType == "pipe" {
 		progressArg = progressSocket
@@ -42,7 +40,6 @@ func ProcessVideo(path string, codec string, quality float64, updateProgress fun
 		progressArg = "unix://" + progressSocket
 	}
 
-	// Run FFmpeg with progress tracking
 	err = ffmpeg.Input(path).
 		Output(outputFile, ffmpeg.KwArgs{
 			"c:v":      codec,
@@ -80,7 +77,6 @@ func calculateCRF(quality int) string {
 	return fmt.Sprintf("%d", crf)
 }
 
-// progressTempSock creates a temporary socket or named pipe for progress tracking
 func progressTempSock(totalDuration float64, updateProgress func(progress float64)) (string, string) {
 	rand.Seed(time.Now().Unix())
 	var sockFileName string
@@ -89,12 +85,10 @@ func progressTempSock(totalDuration float64, updateProgress func(progress float6
 	var socketType string
 
 	if runtime.GOOS == "windows" {
-		// Use a named pipe on Windows
 		sockFileName = fmt.Sprintf(`\\.\pipe\%d_sock`, rand.Int())
-		listener, err = net.Listen("pipe", sockFileName)
+		listener, err = npipe.Listen(sockFileName)
 		socketType = "pipe"
 	} else {
-		// Use a Unix domain socket on Unix-like systems
 		sockFileName = path.Join(os.TempDir(), fmt.Sprintf("%d_sock", rand.Int()))
 		listener, err = net.Listen("unix", sockFileName)
 		socketType = "unix"
@@ -131,7 +125,7 @@ func progressTempSock(totalDuration float64, updateProgress func(progress float6
 					updateProgress(progress)
 				}
 				if strings.Contains(data, "progress=end") {
-					updateProgress(1.0) // Mark as complete
+					updateProgress(1.0)
 					return
 				}
 			}
