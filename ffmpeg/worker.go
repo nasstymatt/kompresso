@@ -40,16 +40,18 @@ func ProcessVideo(path string, codec string, quality float64, updateProgress fun
 		progressArg = "unix://" + progressSocket
 	}
 
+	fmt.Println("quality", quality)
+
+	kwArgs := GetKWArgsForCodec(codec, quality)
+	globalArgs := GetGlobalArgsForCodec(codec)
+
+	globalArgs = append(globalArgs, "-progress", progressArg)
+
+	fmt.Printf("Compressing video: %f\n", quality)
+
 	err = ffmpeg.Input(path).
-		Output(outputFile, ffmpeg.KwArgs{
-			"c:v":      codec,
-			"crf":      calculateCRF(int(quality)),
-			"pix_fmt":  "yuv420p",
-			"vf":       "pad=ceil(iw/2)*2:ceil(ih/2)*2",
-			"movflags": "+faststart",
-			"preset":   "slow",
-		}).
-		GlobalArgs("-progress", progressArg, "-hide_banner", "-nostats", "-loglevel", "error").
+		Output(outputFile, kwArgs).
+		GlobalArgs(globalArgs...).
 		OverWriteOutput().
 		Run()
 
@@ -58,23 +60,6 @@ func ProcessVideo(path string, codec string, quality float64, updateProgress fun
 	}
 
 	return nil
-}
-
-func calculateCRF(quality int) string {
-	const (
-		maxCRF     = 36
-		minCRF     = 24
-		defaultCRF = 28
-	)
-
-	if quality < 0 || quality > 100 {
-		return fmt.Sprintf("%d", defaultCRF)
-	}
-
-	diff := (maxCRF - minCRF) - ((maxCRF - minCRF) * quality / 100)
-	crf := minCRF + diff
-
-	return fmt.Sprintf("%d", crf)
 }
 
 func progressTempSock(totalDuration float64, updateProgress func(progress float64)) (string, string) {
