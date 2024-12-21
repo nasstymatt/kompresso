@@ -10,12 +10,10 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/natefinch/npipe"
 	ffmpeg "github.com/u2takey/ffmpeg-go"
 )
 
@@ -31,23 +29,12 @@ func ProcessVideo(path string, codec string, quality float64, updateProgress fun
 		return fmt.Errorf("error extracting duration: %v", err)
 	}
 
-	progressSocket, socketType := progressTempSock(totalDuration, updateProgress)
-
-	var progressArg string
-	if socketType == "pipe" {
-		progressArg = progressSocket
-	} else {
-		progressArg = "unix://" + progressSocket
-	}
-
-	fmt.Println("quality", quality)
+	progressSocket := progressTempSock(totalDuration, updateProgress)
 
 	kwArgs := GetKWArgsForCodec(codec, quality)
 	globalArgs := GetGlobalArgsForCodec(codec)
 
-	globalArgs = append(globalArgs, "-progress", progressArg)
-
-	fmt.Printf("Compressing video: %f\n", quality)
+	globalArgs = append(globalArgs, "-progress", "unix://"+progressSocket)
 
 	err = ffmpeg.Input(path).
 		Output(outputFile, kwArgs).
@@ -62,22 +49,14 @@ func ProcessVideo(path string, codec string, quality float64, updateProgress fun
 	return nil
 }
 
-func progressTempSock(totalDuration float64, updateProgress func(progress float64)) (string, string) {
-	rand.Seed(time.Now().Unix())
+func progressTempSock(totalDuration float64, updateProgress func(progress float64)) string {
+	rand.New(rand.NewSource(time.Now().UnixNano()))
 	var sockFileName string
 	var listener net.Listener
 	var err error
-	var socketType string
 
-	if runtime.GOOS == "windows" {
-		sockFileName = fmt.Sprintf(`\\.\pipe\%d_sock`, rand.Int())
-		listener, err = npipe.Listen(sockFileName)
-		socketType = "pipe"
-	} else {
-		sockFileName = path.Join(os.TempDir(), fmt.Sprintf("%d_sock", rand.Int()))
-		listener, err = net.Listen("unix", sockFileName)
-		socketType = "unix"
-	}
+	sockFileName = path.Join(os.TempDir(), fmt.Sprintf("%d_sock", rand.Int()))
+	listener, err = net.Listen("unix", sockFileName)
 
 	if err != nil {
 		log.Fatalf("error creating socket: %v", err)
@@ -117,7 +96,7 @@ func progressTempSock(totalDuration float64, updateProgress func(progress float6
 		}
 	}()
 
-	return sockFileName, socketType
+	return sockFileName
 }
 
 func probeDuration(a string) (float64, error) {
