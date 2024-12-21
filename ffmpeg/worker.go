@@ -6,11 +6,8 @@ import (
 	"log"
 	"math/rand"
 	"net"
-	"os"
-	"path"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -31,14 +28,10 @@ func ProcessVideo(path string, codec string, quality float64, updateProgress fun
 		return fmt.Errorf("error extracting duration: %v", err)
 	}
 
-	progressSocket, socketType := progressTempSock(totalDuration, updateProgress)
+	progressSocket := progressTempSock(totalDuration, updateProgress)
 
 	var progressArg string
-	if socketType == "pipe" {
-		progressArg = progressSocket
-	} else {
-		progressArg = "unix://" + progressSocket
-	}
+	progressArg = progressSocket
 
 	fmt.Println("quality", quality)
 
@@ -62,22 +55,14 @@ func ProcessVideo(path string, codec string, quality float64, updateProgress fun
 	return nil
 }
 
-func progressTempSock(totalDuration float64, updateProgress func(progress float64)) (string, string) {
+func progressTempSock(totalDuration float64, updateProgress func(progress float64)) string {
 	rand.Seed(time.Now().Unix())
 	var sockFileName string
 	var listener net.Listener
 	var err error
-	var socketType string
 
-	if runtime.GOOS == "windows" {
-		sockFileName = fmt.Sprintf(`\\.\pipe\%d_sock`, rand.Int())
-		listener, err = npipe.Listen(sockFileName)
-		socketType = "pipe"
-	} else {
-		sockFileName = path.Join(os.TempDir(), fmt.Sprintf("%d_sock", rand.Int()))
-		listener, err = net.Listen("unix", sockFileName)
-		socketType = "unix"
-	}
+	sockFileName = fmt.Sprintf(`\\.\pipe\%d_sock`, rand.Int())
+	listener, err = npipe.Listen(sockFileName)
 
 	if err != nil {
 		log.Fatalf("error creating socket: %v", err)
@@ -117,7 +102,7 @@ func progressTempSock(totalDuration float64, updateProgress func(progress float6
 		}
 	}()
 
-	return sockFileName, socketType
+	return sockFileName
 }
 
 func probeDuration(a string) (float64, error) {
